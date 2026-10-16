@@ -1,5 +1,3 @@
-import {previews} from './previews.mjs';
-
 const args = new URLSearchParams(location.search);
 const href = args.get('href') || '';
 const title = args.get('title') || href;
@@ -41,9 +39,14 @@ document.getElementById('title').textContent = title;
   }
 }
 
-previews.get(href).then(r => {
-  if (r) {
-    document.getElementById('preview').src = r.image;
+// previews are served by the background. Firefox partitions the storage of extension pages that are loaded in a
+// container tab, so this page cannot read the background's IndexedDB directly
+chrome.runtime.sendMessage({
+  method: 'dummy.preview',
+  href
+}).then(image => {
+  if (image) {
+    document.getElementById('preview').src = image;
   }
 }).catch(e => console.warn('cannot read the preview', e));
 
@@ -57,7 +60,10 @@ const cleanup = async () => {
   const used = tabs.some(t => t.id !== self.id && t.url && t.url.startsWith(location.origin + location.pathname) &&
     new URL(t.url).searchParams.get('href') === href);
   if (used === false) {
-    await previews.remove(href);
+    await chrome.runtime.sendMessage({
+      method: 'dummy.forget',
+      href
+    });
   }
 };
 

@@ -130,6 +130,20 @@ const placeholder = async tab => {
   }
 };
 
+// serve previews to placeholder pages. They cannot read this IndexedDB themselves when they are loaded in a
+// container tab (Firefox partitions the storage of extension pages by container). Registered at start-up so
+// that a placeholder restored after a browser restart gets its preview even before the plug-in is enabled
+chrome.runtime.onMessage.addListener((request, sender, response) => {
+  if (request.method === 'dummy.preview') {
+    previews.get(request.href).then(r => response(r ? r.image : ''), () => response(''));
+    return true;
+  }
+  if (request.method === 'dummy.forget') {
+    previews.remove(request.href).then(() => response(true), () => response(false));
+    return true;
+  }
+});
+
 // when the user leaves a placeholder that was selected (but not loaded), discard it again
 const asleep = () => {
   clearTimeout(asleep.id);

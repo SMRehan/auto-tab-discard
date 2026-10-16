@@ -15,11 +15,11 @@ function fixture({captureTab = true, granted = true, activateOnCapture = false, 
   const captured = [];
   const stored = [];
   const updated = [];
-  const listeners = {updated: new Set(), activated: new Set()};
+  const listeners = {updated: new Set(), activated: new Set(), message: new Set()};
   const timers = [];
   const event = set => ({addListener: c => set.add(c), removeListener: c => set.delete(c)});
   const chrome = {
-    runtime: {getURL: p => 'moz-extension://uuid' + p},
+    runtime: {getURL: p => 'moz-extension://uuid' + p, onMessage: event(listeners.message)},
     permissions: {contains: async () => granted},
     scripting: {executeScript: async () => {
       if (frames instanceof Error) {
@@ -68,6 +68,11 @@ function fixture({captureTab = true, granted = true, activateOnCapture = false, 
       .map(t => ({...t})),
     previews: {
       set: async (href, image) => stored.push({href, image}),
+      get: async href => stored.find(p => p.href === href),
+      remove: async href => {
+        const i = stored.findIndex(p => p.href === href);
+        if (i !== -1) stored.splice(i, 1);
+      },
       keep: async () => {}
     }
   });
@@ -166,4 +171,20 @@ test('pages that ask before leaving are discarded natively', async () => {
     assert.deepEqual(f.captured, []);
     assert.deepEqual(f.native, [1]);
   }
+});
+
+test('placeholder pages get and forget previews through messages (container tabs cannot read the IndexedDB)', async () => {
+  const f = fixture();
+  f.add({id: 1, url: 'https://example.com/a'});
+  await f.plugin.placeholder({id: 1});
+  const [listener] = f.listeners.message;
+  const ask = request => new Promise(resolve => {
+    const async = listener(request, {}, resolve);
+    if (async !== true) resolve(undefined);
+  });
+  assert.equal(await ask({method: 'dummy.preview', href: 'https://example.com/a'}), 'data:image/jpeg;base64,AAAA');
+  assert.equal(await ask({method: 'dummy.preview', href: 'https://example.com/unknown'}), '');
+  assert.equal(await ask({method: 'dummy.forget', href: 'https://example.com/a'}), true);
+  assert.equal(await ask({method: 'dummy.preview', href: 'https://example.com/a'}), '');
+  assert.equal(await ask({method: 'storage'}), undefined, 'other messages are left to other listeners');
 });
