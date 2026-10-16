@@ -116,10 +116,14 @@ const discard = tab => {
 };
 discard.tabs = [];
 discard.count = 0;
+// the final step that unloads a tab. Plug-ins (e.g. plugins/dummy) can replace it
+// to unload a tab differently. "discard.perform" wrappers (e.g. plugins/youtube)
+// keep working since they all end up here
+discard.method = tab => chrome.tabs.discard(tab.id);
 discard.perform = tab => {
   try {
     log('discarding', tab.id, tab.title, tab.url);
-    chrome.tabs.discard(tab.id).catch(e => {});
+    Promise.resolve(discard.method(tab)).catch(e => log('discarding failed', e));
   }
   catch (e) {
     log('discarding failed', e);

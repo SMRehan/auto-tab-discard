@@ -10,6 +10,7 @@ import create from './create/core.mjs';
 import unloaded from './unloaded/core.mjs';
 import youtube from './youtube/core.mjs';
 import groupCollapse from './group-collapse/core.mjs';
+import dummy from './dummy/core.mjs';
 
 const D = {
   'before-menu-click'() {
@@ -41,7 +42,8 @@ const ready = storage({
   './plugins/new/core.js': false,
   './plugins/unloaded/core.js': false,
   './plugins/youtube/core.js': false,
-  './plugins/group-collapse/core.js': false
+  './plugins/group-collapse/core.js': false,
+  './plugins/dummy/core.js': false
 }).then(prefs => {
   startup.enable();
 
@@ -125,6 +127,14 @@ const ready = storage({
       console.error('Failed to load plugin', e);
     }
   }
+  if (prefs['./plugins/dummy/core.js']) {
+    try {
+      dummy.enable();
+    }
+    catch (e) {
+      console.error('Failed to load plugin', e);
+    }
+  }
 });
 
 chrome.storage.onChanged.addListener(ps => {
@@ -158,6 +168,9 @@ chrome.storage.onChanged.addListener(ps => {
   }
   if ('./plugins/group-collapse/core.js' in ps) {
     groupCollapse[ps['./plugins/group-collapse/core.js'].newValue ? 'enable' : 'disable']();
+  }
+  if ('./plugins/dummy/core.js' in ps) {
+    dummy[ps['./plugins/dummy/core.js'].newValue ? 'enable' : 'disable']();
   }
 });
 

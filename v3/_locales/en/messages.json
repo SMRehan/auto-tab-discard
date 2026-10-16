@@ -150,7 +150,7 @@
     "message": "Plug-ins"
   },
   "options_plugin_dummy": {
-    "message": "When discarding, replace the page with a local dummy alternative (beta)"
+    "message": "When discarding, replace the page with a lightweight placeholder that shows a preview of the page and only loads it on click or Enter, not when the tab gets selected (beta)"
   },
   "options_plugin_blank": {
     "message": "Open a temporary blank page when all tabs in an inactive window are discarded (to be able to discard the active tab on this window)"
@@ -541,5 +541,11 @@
   },
   "blank_header": {
     "message": "(Discarded Window)"
+  },
+  "dummy_msg": {
+    "message": "This tab is discarded. Click anywhere or press Enter to load it."
+  },
+  "dummy_time": {
+    "message": "Discarded"
   }
 }

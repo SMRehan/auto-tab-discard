@@ -1,0 +1,115 @@
+import {previews} from './previews.mjs';
+
+const args = new URLSearchParams(location.search);
+const href = args.get('href') || '';
+const title = args.get('title') || href;
+const restorable = /^https?:/.test(href);
+
+// localization
+[...document.querySelectorAll('[data-i18n]')].forEach(e => {
+  e.textContent = chrome.i18n.getMessage(e.dataset.i18n);
+});
+
+document.title = title;
+document.getElementById('title').textContent = title;
+{
+  const a = document.getElementById('href');
+  a.textContent = href;
+  if (restorable) {
+    a.href = href; // middle-click opens the original page in a new tab
+  }
+}
+{
+  const favicon = args.get('favicon');
+  if (favicon) {
+    document.head.appendChild(Object.assign(document.createElement('link'), {
+      rel: 'icon',
+      href: favicon
+    }));
+    document.getElementById('favicon').src = favicon;
+  }
+}
+{
+  const time = Number(args.get('time'));
+  if (time) {
+    const minutes = Math.round((Date.now() - time) / 60000);
+    const format = new Intl.RelativeTimeFormat(undefined, {numeric: 'auto'});
+    const [value, unit] = minutes < 60 ? [minutes, 'minute'] :
+      (minutes < 60 * 24 ? [Math.round(minutes / 60), 'hour'] : [Math.round(minutes / 60 / 24), 'day']);
+    document.getElementById('time').textContent = chrome.i18n.getMessage('dummy_time') + ' ' +
+      format.format(-value, unit);
+  }
+}
+
+previews.get(href).then(r => {
+  if (r) {
+    document.getElementById('preview').src = r.image;
+  }
+}).catch(e => console.warn('cannot read the preview', e));
+
+/* load the original page */
+let loading = false;
+
+// remove the preview unless another placeholder tab still needs it
+const cleanup = async () => {
+  const self = await chrome.tabs.getCurrent();
+  const tabs = await chrome.tabs.query({});
+  const used = tabs.some(t => t.id !== self.id && t.url && t.url.startsWith(location.origin + location.pathname) &&
+    new URL(t.url).searchParams.get('href') === href);
+  if (used === false) {
+    await previews.remove(href);
+  }
+};
+
+const load = () => {
+  if (loading || restorable === false) {
+    return;
+  }
+  loading = true;
+  document.body.classList.add('loading');
+
+  Promise.race([
+    cleanup().catch(e => console.warn('cannot remove the preview', e)),
+    new Promise(resolve => setTimeout(resolve, 300))
+  ]).then(() => {
+    // the original page is one step back in the session history. Going back restores its scroll
+    // position and form data. If there is no history (e.g. the history got cleared), load the URL
+    if (history.length > 1) {
+      const id = setTimeout(() => location.replace(href), 1000);
+      addEventListener('beforeunload', () => clearTimeout(id));
+      history.back();
+    }
+    else {
+      location.replace(href);
+    }
+  });
+};
+
+document.addEventListener('click', e => {
+  if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault();
+    load();
+  }
+});
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    load();
+  }
+});
+
+/* the background discards this placeholder right after it is created. Discard it whenever it gets hidden too
+   (e.g. after it was selected but not loaded, or when it is restored in the background after a browser
+   restart), so only a lightweight local page gets loaded when the tab is selected next time */
+const sleep = () => {
+  clearTimeout(sleep.id);
+  if (document.hidden && loading === false) {
+    sleep.id = setTimeout(() => chrome.tabs.getCurrent().then(tab => {
+      if (tab && tab.active === false && tab.discarded === false) {
+        return chrome.tabs.discard(tab.id);
+      }
+    }).catch(e => console.warn('cannot discard the placeholder', e)), 1000);
+  }
+};
+document.addEventListener('visibilitychange', sleep);
+sleep();
