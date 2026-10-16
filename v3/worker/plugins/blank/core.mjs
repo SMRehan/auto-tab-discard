@@ -48,6 +48,11 @@ const cleanup = async () => {
   await chrome.storage.session.set({[NEWTABS]: keep});
 };
 
+// registered at start-up: listeners added later do not wake an idle background (event page), and the user
+// usually stays on the new tab longer than the background stays awake. Both only act on tracked new tabs
+chrome.tabs.onActivated.addListener(cleanup);
+chrome.tabs.onUpdated.addListener(used);
+
 function enable() {
   log('blank.enable is called');
   overwrite('before-menu-click', function({menuItemId}, tab) {
@@ -119,14 +124,10 @@ function enable() {
       });
     }
   });
-  chrome.tabs.onActivated.addListener(cleanup);
-  chrome.tabs.onUpdated.addListener(used);
 }
 function disable() {
   log('blank.disable is called');
   release('before-menu-click');
-  chrome.tabs.onActivated.removeListener(cleanup);
-  chrome.tabs.onUpdated.removeListener(used);
 }
 
 export default {

@@ -257,16 +257,18 @@ const asleep = () => {
   })), 1000);
 };
 
+// registered at start-up so that it also wakes an idle background (event page). It only acts on placeholder
+// tabs, which keep working when the plug-in gets disabled
+chrome.tabs.onActivated.addListener(asleep);
+
 function enable() {
   log('dummy.enable is called');
   discard.method = placeholder;
-  chrome.tabs.onActivated.addListener(asleep);
 }
 function disable() {
   log('dummy.disable is called');
   // placeholders that are already open keep working; they do not depend on this module
   discard.method = method;
-  chrome.tabs.onActivated.removeListener(asleep);
 }
 
 export default {

@@ -154,15 +154,16 @@ test('without "<all_urls>" or tabs.captureTab the placeholder has no preview', a
   }
 });
 
-test('enable and disable swap the discard method and the tab listener', () => {
+test('enable and disable swap the discard method; the tab listener is registered at start-up', () => {
   const f = fixture();
   const method = f.discard.method;
+  // registered at start-up so it wakes an idle background
+  assert.equal(f.listeners.activated.size, 1);
   f.plugin.enable();
   assert.equal(f.discard.method, f.plugin.placeholder);
-  assert.equal(f.listeners.activated.size, 1);
   f.plugin.disable();
   assert.equal(f.discard.method, method);
-  assert.equal(f.listeners.activated.size, 0);
+  assert.equal(f.listeners.activated.size, 1);
 });
 
 test('switching tabs discards placeholders that were selected but not loaded', async () => {
