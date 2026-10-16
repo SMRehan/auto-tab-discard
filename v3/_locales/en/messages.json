@@ -155,6 +155,9 @@
   "options_plugin_blank": {
     "message": "Open a temporary blank page when all tabs in an inactive window are discarded (to be able to discard the active tab on this window)"
   },
+  "options_plugin_blank_newtab": {
+    "message": "When discarding the current tab, open a new tab instead of the temporary blank page (closed again if left unused)"
+  },
   "options_plugin_focus": {
     "message": "Release discarding of all tabs in the active window. If enabled, no tab in the active window will be discarded."
   },
