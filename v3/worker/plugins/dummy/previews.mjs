@@ -27,8 +27,10 @@ const previews = {
   get(href) {
     return transaction('readonly', store => store.get(href));
   },
-  set(href, image) {
+  // meta: {top, y, width} of a full page preview, in CSS pixels
+  set(href, image, meta = {}) {
     return transaction('readwrite', store => store.put({
+      ...meta,
       href,
       image,
       time: Date.now()

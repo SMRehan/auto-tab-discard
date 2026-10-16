@@ -44,9 +44,20 @@ document.getElementById('title').textContent = title;
 chrome.runtime.sendMessage({
   method: 'dummy.preview',
   href
-}).then(image => {
+}).then(r => {
+  // older previews are a plain image of the visible part
+  const {image, top, y, width} = typeof r === 'string' ? {image: r} : (r || {});
   if (image) {
-    document.getElementById('preview').src = image;
+    const img = document.getElementById('preview');
+    img.onload = () => {
+      // full page preview: open it where the user left the page (the title bar is sticky, so the preview
+      // starts right below it at this scroll position)
+      if (width > 0 && typeof top === 'number' && typeof y === 'number') {
+        const ratio = img.clientWidth / width;
+        document.scrollingElement.scrollTop = Math.max(0, (y - top) * ratio);
+      }
+    };
+    img.src = image;
   }
 }).catch(e => console.warn('cannot read the preview', e));
 
@@ -74,9 +85,21 @@ const load = () => {
   loading = true;
   document.body.classList.add('loading');
 
+  // the background scrolls pages that do not restore their own scroll position (single page apps). The
+  // message must be delivered before this page unloads, so wait for the answer
+  const y = Number(args.get('y'));
+  const restore = y > 0 ? chrome.runtime.sendMessage({
+    method: 'dummy.restore',
+    href,
+    y
+  }) : Promise.resolve();
+
   Promise.race([
-    cleanup().catch(e => console.warn('cannot remove the preview', e)),
-    new Promise(resolve => setTimeout(resolve, 300))
+    Promise.all([
+      cleanup().catch(e => console.warn('cannot remove the preview', e)),
+      restore.catch(e => console.warn('cannot ask for the scroll position fallback', e))
+    ]),
+    new Promise(resolve => setTimeout(resolve, 500))
   ]).then(() => {
     // the original page is one step back in the session history. Going back restores its scroll
     // position and form data. If there is no history (e.g. the history got cleared), load the URL
@@ -98,7 +121,8 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+  // Space, arrows, and Page Up/Down scroll the preview
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     e.preventDefault();
     load();
   }

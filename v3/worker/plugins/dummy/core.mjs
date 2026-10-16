@@ -31,9 +31,29 @@ const prune = () => {
 };
 prune.time = 0;
 
+// the preview covers the whole page, up to this many screens; on longer pages, the screens around the
+// position the user left the page at (SCREENS_ABOVE above it)
+const SCREENS = 10;
+const SCREENS_ABOVE = 3;
+const MAX_HEIGHT = 16000; // CSS pixels
+
+// the part of the page to capture, in CSS pixels relative to the page
+const area = m => {
+  const cap = Math.min(SCREENS * m.vh, MAX_HEIGHT);
+  if (m.height <= cap) {
+    return {x: 0, y: 0, width: m.width, height: m.height};
+  }
+  return {
+    x: 0,
+    y: Math.round(Math.max(0, Math.min(m.y - SCREENS_ABOVE * m.vh, m.height - cap))),
+    width: m.width,
+    height: Math.round(cap)
+  };
+};
+
 // Firefox only (tabs.captureTab). It requires "<all_urls>" which Firefox grants on install because of the
 // content script matches. Users can revoke it; then the placeholder is shown without a preview
-const capture = async tab => {
+const capture = async (tab, metrics) => {
   if (!chrome.tabs.captureTab) {
     return;
   }
@@ -43,35 +63,63 @@ const capture = async tab => {
   if (granted !== true) {
     return log('dummy', 'preview is skipped', '"<all_urls>" permission is not granted');
   }
-  const image = await chrome.tabs.captureTab(tab.id, {
+  const options = {
     format: 'jpeg',
     quality: 60,
     scale: 1
-  });
-  await previews.set(tab.url, image);
+  };
+  let image;
+  let meta = {};
+  if (metrics && metrics.width > 0 && metrics.height > 0 && metrics.vh > 0) {
+    const rect = area(metrics);
+    image = await chrome.tabs.captureTab(tab.id, {...options, rect}).catch(e => {
+      log('dummy', 'full page capture failed', e.message || e);
+    });
+    if (image) {
+      meta = {top: rect.y, y: metrics.y, width: rect.width};
+    }
+  }
+  // visible part only
+  if (!image) {
+    image = await chrome.tabs.captureTab(tab.id, options);
+  }
+  await previews.set(tab.url, image, meta);
   await prune();
 };
 
-// does leaving this page show a "Leave page?" prompt (beforeunload)? Such pages cannot be replaced without
-// prompting the user. A synthetic and cancelable "beforeunload" event is dispatched to find out; listeners
-// that block leaving the page cancel it. This is the same set of pages that native discarding skips
-const prompts = tab => chrome.scripting.executeScript({
+// one script for every frame:
+// 1. does leaving this page show a "Leave page?" prompt (beforeunload)? Such pages cannot be replaced without
+//    prompting the user. A synthetic and cancelable "beforeunload" event is dispatched to find out; listeners
+//    that block leaving the page cancel it. This is the same set of pages that native discarding skips
+// 2. size and scroll position of the top document (for the preview and to restore the scroll position)
+const inspect = tab => chrome.scripting.executeScript({
   target: {
     tabId: tab.id,
     allFrames: true
   },
   world: 'MAIN',
   func: () => {
-    if (typeof window.onbeforeunload === 'function') {
-      return true;
+    let prompts = typeof window.onbeforeunload === 'function';
+    if (prompts === false) {
+      const e = new Event('beforeunload', {
+        cancelable: true
+      });
+      window.dispatchEvent(e);
+      prompts = e.defaultPrevented;
     }
-    const e = new Event('beforeunload', {
-      cancelable: true
-    });
-    window.dispatchEvent(e);
-    return e.defaultPrevented;
+    const root = document.scrollingElement || document.documentElement;
+    return {
+      prompts,
+      width: root.clientWidth,
+      height: root.scrollHeight,
+      y: window.scrollY,
+      vh: window.innerHeight
+    };
   }
-}).then(r => r.some(o => o.result === true));
+}).then(r => ({
+  prompts: r.some(o => o.result && o.result.prompts),
+  metrics: (r.find(o => o.frameId === 0) || {}).result
+}));
 
 // resolves when the placeholder page of this tab is loaded (or after 10 seconds)
 const complete = id => new Promise(resolve => {
@@ -99,11 +147,12 @@ const placeholder = async tab => {
   if (/^https?:/.test(t.url) === false) {
     return method(t);
   }
-  if (await prompts(t).catch(() => true)) {
+  const {prompts, metrics} = await inspect(t).catch(() => ({prompts: true}));
+  if (prompts) {
     log('dummy', 'placeholder is skipped', 'page asks before leaving', t.id);
     return method(t);
   }
-  await capture(t).catch(e => log('dummy', 'preview capture failed', e.message || e));
+  await capture(t, metrics).catch(e => log('dummy', 'preview capture failed', e.message || e));
   // the user might have switched to this tab while the preview was being captured
   if ((await chrome.tabs.get(t.id)).active) {
     return log('dummy', 'placeholder is skipped', 'tab got activated', t.id);
@@ -114,6 +163,9 @@ const placeholder = async tab => {
   args.set('title', t.title || '');
   args.set('favicon', t.favIconUrl || '');
   args.set('time', Date.now());
+  if (metrics && metrics.y > 0) {
+    args.set('y', Math.round(metrics.y));
+  }
 
   log('dummy', 'replacing with placeholder', t.id, t.url);
   const loaded = complete(t.id);
@@ -130,13 +182,62 @@ const placeholder = async tab => {
   }
 };
 
+/* scroll position fallback. Going back in the history restores the scroll position of most pages; pages that
+   rebuild themselves on load (single page apps) come back at the top. Those are scrolled to where the user
+   left them */
+const restoring = new Map(); // tab id → {href, y, time}
+const scroll = (tabId, y) => chrome.scripting.executeScript({
+  target: {
+    tabId
+  },
+  args: [y],
+  func: y => {
+    if (window.scrollY < 10 && document.documentElement.scrollHeight > y) {
+      window.scrollTo(0, y);
+      return true;
+    }
+    return false;
+  }
+}).then(r => r[0] && r[0].result).catch(() => false);
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  const r = restoring.get(tabId);
+  if (!r || info.status !== 'complete' || tab.url !== r.href) {
+    return;
+  }
+  restoring.delete(tabId);
+  if (Date.now() - r.time > 60 * 1000 || !(r.y > 100)) {
+    return;
+  }
+  // once after load and once more for content that renders late
+  setTimeout(() => scroll(tabId, r.y).then(done => {
+    log('dummy', 'scroll position fallback', tabId, done);
+    if (done === false) {
+      setTimeout(() => scroll(tabId, r.y), 1500);
+    }
+  }), 300);
+});
+
 // serve previews to placeholder pages. They cannot read this IndexedDB themselves when they are loaded in a
 // container tab (Firefox partitions the storage of extension pages by container). Registered at start-up so
 // that a placeholder restored after a browser restart gets its preview even before the plug-in is enabled
 chrome.runtime.onMessage.addListener((request, sender, response) => {
   if (request.method === 'dummy.preview') {
-    previews.get(request.href).then(r => response(r ? r.image : ''), () => response(''));
+    previews.get(request.href).then(r => response(r ? {
+      image: r.image,
+      top: r.top,
+      y: r.y,
+      width: r.width
+    } : ''), () => response(''));
     return true;
+  }
+  if (request.method === 'dummy.restore' && sender.tab) {
+    restoring.set(sender.tab.id, {
+      href: request.href,
+      y: request.y,
+      time: Date.now()
+    });
+    response(true);
+    return;
   }
   if (request.method === 'dummy.forget') {
     previews.remove(request.href).then(() => response(true), () => response(false));
