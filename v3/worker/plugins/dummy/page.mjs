@@ -97,7 +97,12 @@ const load = () => {
   Promise.race([
     Promise.all([
       cleanup().catch(e => console.warn('cannot remove the preview', e)),
-      restore.catch(e => console.warn('cannot ask for the scroll position fallback', e))
+      restore.catch(e => console.warn('cannot ask for the scroll position fallback', e)),
+      chrome.runtime.sendMessage({
+        method: 'dummy.stat',
+        type: 'restore',
+        href
+      }).catch(() => {})
     ]),
     new Promise(resolve => setTimeout(resolve, 500))
   ]).then(() => {
@@ -131,6 +136,23 @@ document.addEventListener('keydown', e => {
 /* the background discards this placeholder right after it is created. Discard it whenever it gets hidden too
    (e.g. after it was selected but not loaded, or when it is restored in the background after a browser
    restart), so only a lightweight local page gets loaded when the tab is selected next time */
+// a placeholder that is shown instead of the page is a reload avoided (logged once per showing)
+const viewed = () => {
+  if (document.hidden === false && loading === false && viewed.shown !== true) {
+    viewed.shown = true;
+    chrome.runtime.sendMessage({
+      method: 'dummy.stat',
+      type: 'view',
+      href
+    }).catch(() => {});
+  }
+  if (document.hidden) {
+    viewed.shown = false;
+  }
+};
+document.addEventListener('visibilitychange', viewed);
+viewed();
+
 const sleep = () => {
   clearTimeout(sleep.id);
   if (document.hidden && loading === false) {

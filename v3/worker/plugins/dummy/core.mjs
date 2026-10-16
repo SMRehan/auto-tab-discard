@@ -6,6 +6,7 @@
 import {log, query} from '../../core/utils.mjs';
 import {discard} from '../../core/discard.mjs';
 import {previews} from './previews.mjs';
+import {stats} from './stats.mjs';
 
 const PAGE = chrome.runtime.getURL('/worker/plugins/dummy/page.html');
 const method = discard.method;
@@ -145,11 +146,13 @@ const placeholder = async tab => {
   }
   // only web pages can be restored from the placeholder
   if (/^https?:/.test(t.url) === false) {
+    stats.record('native', t.url);
     return method(t);
   }
   const {prompts, metrics} = await inspect(t).catch(() => ({prompts: true}));
   if (prompts) {
     log('dummy', 'placeholder is skipped', 'page asks before leaving', t.id);
+    stats.record('native', t.url);
     return method(t);
   }
   await capture(t, metrics).catch(e => log('dummy', 'preview capture failed', e.message || e));
@@ -173,6 +176,7 @@ const placeholder = async tab => {
   await chrome.tabs.update(t.id, {
     url: PAGE + '?' + args.toString()
   });
+  stats.record('placeholder', t.url);
   await loaded;
   // discard the placeholder natively. This is done here and not by the placeholder page since timers of
   // background tabs are throttled
@@ -238,6 +242,10 @@ chrome.runtime.onMessage.addListener((request, sender, response) => {
     });
     response(true);
     return;
+  }
+  if (request.method === 'dummy.stat' && (request.type === 'view' || request.type === 'restore')) {
+    stats.record(request.type, request.href).then(() => response(true));
+    return true;
   }
   if (request.method === 'dummy.forget') {
     previews.remove(request.href).then(() => response(true), () => response(false));

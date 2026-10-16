@@ -17,6 +17,7 @@ function fixture({captureTab = true, granted = true, activateOnCapture = false, 
   const native = [];
   const captured = [];
   const captures = [];
+  const events = [];
   const scrolls = [];
   const stored = [];
   const updated = [];
@@ -77,6 +78,7 @@ function fixture({captureTab = true, granted = true, activateOnCapture = false, 
     },
     clearTimeout: () => {},
     log: () => {},
+    stats: {record: async (type, href) => events.push([type, href])},
     query: async filter => [...tabs.values()].filter(t => Object.entries(filter).every(([k, v]) => t[k] === v))
       .map(t => ({...t})),
     previews: {
@@ -95,7 +97,7 @@ function fixture({captureTab = true, granted = true, activateOnCapture = false, 
     tabs.set(t.id, t);
     return t;
   };
-  return {ctx, add, tabs, native, captured, captures, scrolls, stored, updated, listeners, timers, plugin: ctx.plugin, discard};
+  return {ctx, add, tabs, native, captured, captures, scrolls, stored, updated, listeners, timers, events, plugin: ctx.plugin, discard};
 }
 
 test('a web page is captured, replaced by the placeholder, and the placeholder gets discarded', async () => {
@@ -256,4 +258,24 @@ test('no scroll fallback for positions near the top', async () => {
   listener({method: 'dummy.restore', href: 'https://example.com/', y: 50}, {tab: {id: 7}}, () => {});
   onUpdated(7, {status: 'complete'}, {url: 'https://example.com/'});
   assert.equal(f.timers.length, 0);
+});
+
+test('events are recorded for the memory report', async () => {
+  const f = fixture();
+  f.add({id: 1, url: 'https://example.com/a'});
+  f.add({id: 2, url: 'about:preferences'});
+  await f.plugin.placeholder({id: 1});
+  await f.plugin.placeholder({id: 2});
+  const [listener] = f.listeners.message;
+  for (const type of ['view', 'restore', 'bogus']) {
+    await new Promise(resolve => {
+      if (listener({method: 'dummy.stat', type, href: 'https://example.com/a'}, {}, resolve) !== true) resolve();
+    });
+  }
+  assert.deepEqual(f.events.map(e => [...e]), [
+    ['placeholder', 'https://example.com/a'],
+    ['native', 'about:preferences'],
+    ['view', 'https://example.com/a'],
+    ['restore', 'https://example.com/a']
+  ]);
 });
